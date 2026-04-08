@@ -112,7 +112,7 @@ int login::emaillog(){
                 str = EchoMsgQueue.wait_and_pop();
                 if(str != "false"){
                     userfuc uf(str);
-                    us = user::fromJson(red);
+                    us = user::fromJson(str);
                     if(uf.mainfuc(c) == -2) return -1;
                 } else {
                     printf("\033[0;31m数据异常，请重试。\n\033[0m>");

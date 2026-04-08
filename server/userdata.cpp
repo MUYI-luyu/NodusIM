@@ -65,11 +65,14 @@ std::string userdata::newuid(){
     int i;
     redisReply* reply = NULL;
     reply = (redisReply*)redisCommand(redis, "INCR newuid");
+    if (!reply) {
+        LOG_ERROR("Redis INCR newuid failed");
+        return "0";
+    }
     i = reply->integer;
     char buf[20];
     sprintf(buf, "%d", i);
-    if(reply != NULL)
-        freeReplyObject(reply);
+    freeReplyObject(reply);
     return buf;
 }
 
@@ -77,11 +80,14 @@ std::string userdata::newgid(){
     int i;
     redisReply* reply = NULL;
     reply = (redisReply*)redisCommand(redis, "INCR newgid");
+    if (!reply) {
+        LOG_ERROR("Redis INCR newgid failed");
+        return "0";
+    }
     i = reply->integer;
     char buf[20];
     sprintf(buf, "%d", i);
-    if(reply != NULL)
-        freeReplyObject(reply);
+    freeReplyObject(reply);
     return buf;
 }
 
@@ -89,11 +95,14 @@ std::string userdata::newfid(){
     int i;
     redisReply* reply = NULL;
     reply = (redisReply*)redisCommand(redis, "INCR newfid");
+    if (!reply) {
+        LOG_ERROR("Redis INCR newfid failed");
+        return "0";
+    }
     i = reply->integer;
     char buf[20];
     sprintf(buf, "%d", i);
-    if(reply != NULL)
-        freeReplyObject(reply);
+    freeReplyObject(reply);
     return buf;
 }
 
@@ -104,6 +113,10 @@ bool userdata::RepeatEmail(const char * buf){
     std::string s = buf + i + 1;
     LOG_INFO("拿到email: " << s);
     redisReply* reply = (redisReply*)redisCommand(redis, "SISMEMBER email %s", s.c_str());
+    if (!reply) {
+        LOG_ERROR("Redis SISMEMBER email failed");
+        return false;
+    }
     bool ret = false;
     if(reply->integer == 1) ret = true;//存在
     freeReplyObject(reply);
@@ -114,6 +127,10 @@ bool userdata::RepeatEmail(const char * buf){
 std::string userdata::Getuid(const char * buf){
     LOG_INFO("拿到username: " << buf);
     redisReply* reply = (redisReply*)redisCommand(redis, "GET username:%s", buf);
+    if (!reply) {
+        LOG_ERROR("Redis GET username failed");
+        return "norepeat";
+    }
     if(reply->type == REDIS_REPLY_NIL){
         freeReplyObject(reply);
         return "norepeat";
@@ -127,6 +144,10 @@ std::string userdata::Getuid(const char * buf){
 //根据群聊名返回gid，若用户不存在则返回“norepeat”
 std::string userdata::Getgid(const char * buf){
     redisReply* reply = (redisReply*)redisCommand(redis, "GET groupname:%s", buf);
+    if (!reply) {
+        LOG_ERROR("Redis GET groupname failed");
+        return "norepeat";
+    }
     if(reply->type == REDIS_REPLY_NIL){
         freeReplyObject(reply);
         return "norepeat";
@@ -143,6 +164,10 @@ std::string userdata::Getfid(std::string &uid, std::string &path, bool isgroupfi
     if(isgroupfile == false)
         reply = (redisReply*)redisCommand(redis, "GET filehash:%s:%s", uid.c_str(), path.c_str());
     else reply = (redisReply*)redisCommand(redis, "GET gfilehash:%s:%s", uid.c_str(), path.c_str());
+    if (!reply) {
+        LOG_ERROR("Redis GET filehash failed");
+        return "0";
+    }
     if(reply->type == REDIS_REPLY_NIL){
         freeReplyObject(reply);
         std::string fid = newfid();
@@ -163,6 +188,10 @@ std::string userdata::Getfid(std::string &uid, std::string &path, bool isgroupfi
 std::string userdata::EmailGetuid(const char * buf){
     LOG_INFO("拿到email: " << buf);
     redisReply* reply = (redisReply*)redisCommand(redis, "GET email:%s", buf);
+    if (!reply) {
+        LOG_ERROR("Redis GET email failed");
+        return "norepeat";
+    }
     if(reply->type == REDIS_REPLY_NIL){
         freeReplyObject(reply);
         return "norepeat";
@@ -177,18 +206,32 @@ std::string userdata::EmailGetuid(const char * buf){
 user userdata::GetUesr(std::string buf){
     redisReply* reply = (redisReply*)redisCommand(redis, "GET user:%s", buf.c_str());
     if (!reply) {
-        throw std::runtime_error("Redis command failed: connection lost or server error");
+        std::cerr << "Redis command failed while loading user: " << buf << std::endl;
+        user ret;
+        ret.uid = buf;
+        ret.name = "norepeat";
+        ret.stat = "destroy";
+        return ret;
     }
 
     if (reply->type == REDIS_REPLY_NIL) {
         freeReplyObject(reply);
-        throw std::runtime_error("User not found in Redis");
+        user ret;
+        ret.uid = buf;
+        ret.name = "norepeat";
+        ret.stat = "destroy";
+        return ret;
     }
 
     if (reply->type != REDIS_REPLY_STRING) {
         std::string errMsg = (reply->str ? reply->str : "(null)");
         freeReplyObject(reply);
-        throw std::runtime_error("Unexpected Redis reply type: " + errMsg);
+        std::cerr << "Unexpected Redis reply type while loading user " << buf << ": " << errMsg << std::endl;
+        user ret;
+        ret.uid = buf;
+        ret.name = "norepeat";
+        ret.stat = "destroy";
+        return ret;
     }
 
     try {
@@ -198,8 +241,13 @@ user userdata::GetUesr(std::string buf){
     } catch (const std::exception& e) {
         std::string badJson = reply->str ? reply->str : "(null)";
         freeReplyObject(reply);
-        throw std::runtime_error(std::string("Invalid JSON from Redis: ") + e.what() +
-                                 ", content: " + badJson);
+        std::cerr << "Invalid JSON from Redis for user " << buf << ": " << e.what()
+                  << ", content: " << badJson << std::endl;
+        user ret;
+        ret.uid = buf;
+        ret.name = "norepeat";
+        ret.stat = "destroy";
+        return ret;
     }
 }
 
@@ -215,6 +263,9 @@ std::string userdata::GetGroup(std::string buf){
 
 bool userdata::DELUesr(std::string uid){
     redisReply* reply = (redisReply*)redisCommand(redis, "DEL user:%s", uid.c_str());
+    if (!reply) {
+        return false;
+    }
     bool ret = false;
     if (reply->type == REDIS_REPLY_INTEGER && reply->integer > 0)
         ret = true;
@@ -224,11 +275,17 @@ bool userdata::DELUesr(std::string uid){
 
 bool userdata::setutoj(std::string nuid, std::string s){
     redisReply*reply = (redisReply*)redisCommand(redis, "SET user:%s %s", nuid.c_str(), s.c_str());
+    if (!reply) {
+        return false;
+    }
     freeReplyObject(reply);
     return true;
 }
 bool userdata::setgtoj(std::string ngid, std::string s){
     redisReply*reply = (redisReply*)redisCommand(redis, "SET group:%s %s", ngid.c_str(), s.c_str());
+    if (!reply) {
+        return false;
+    }
     freeReplyObject(reply);
     return true;
 }
@@ -259,8 +316,10 @@ std::string userdata::u_report(std::string uid){
     LOG_WARN("GET uid: " << uid);
 
     if(reply == NULL || reply->type == REDIS_REPLY_NIL || reply->type != REDIS_REPLY_STRING){
-        freeReplyObject(reply);
-        LOG_WARN("return none, reply->str: " << reply->str);
+        if(reply) {
+            LOG_WARN("return none, reply->str: " << (reply->str ? reply->str : "(null)"));
+            freeReplyObject(reply);
+        }
         return "none";
     }
     std::string ret = reply->str;
@@ -271,6 +330,9 @@ std::string userdata::u_report(std::string uid){
 bool userdata::svreport(std::string uid, std::string js){
     //写入json字符串
     redisReply* reply = (redisReply*)redisCommand(redis, "SET report:%s %s", uid.c_str(), js.c_str());
+    if (!reply) {
+        return false;
+    }
     freeReplyObject(reply);
     return true;
 }

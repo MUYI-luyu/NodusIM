@@ -371,16 +371,13 @@ MainReactor::MainReactor(unsigned short port, unsigned int pthread_cnt, bool dat
 
 MainReactor::~MainReactor() {
     pthread_mutex_destroy(&event_mutex);
-    // 1. 停止线程池并等待所有任务完成
-    pthpool.~pthread_pool(); // 调用线程池析构函数（若线程池未自动管理，可显式停止）
-    
-    // 2. 关闭 epoll 句柄
+    // 1. 关闭 epoll 句柄
     if (epfd > 0) {
         close(epfd);
         epfd = -1;
     }
 
-    // 3. 关闭所有客户端套接字（遍历 r_events）
+    // 2. 关闭所有客户端套接字（遍历 r_events）
     for (int i = 0; i < MAX_EVENTS + 1; i++) {
         event& ev = r_events[i];
         if (ev.status == 1 && ev.fd > 0) { // 若在红黑树上且fd有效
@@ -391,7 +388,7 @@ MainReactor::~MainReactor() {
         }
     }
 
-    // 4. 清理监听套接字（位于 r_events[MAX_EVENTS]）
+    // 3. 清理监听套接字（位于 r_events[MAX_EVENTS]）
     event& listen_ev = r_events[MAX_EVENTS];
     if (listen_ev.fd > 0) {
         eventdel(&listen_ev);
@@ -399,7 +396,7 @@ MainReactor::~MainReactor() {
         listen_ev.fd = -1;
     }
 
-    //释放队列
+    // 4. 释放队列
     while(!evq.empty()){
         free(evq.front());
         evq.pop();
@@ -762,16 +759,13 @@ WorkerReactor::WorkerReactor(unsigned short port, pthread_pool& sharedPool, bool
 
 WorkerReactor::~WorkerReactor() {
     pthread_mutex_destroy(&event_mutex);
-    // 1. 停止线程池并等待所有任务完成
-    pthpool.~pthread_pool(); // 调用线程池析构函数（若线程池未自动管理，可显式停止）
-    
-    // 2. 关闭 epoll 句柄
+    // 1. 关闭 epoll 句柄
     if (epfd > 0) {
         close(epfd);
         epfd = -1;
     }
 
-    // 3. 关闭所有客户端套接字（遍历 r_events）
+    // 2. 关闭所有客户端套接字（遍历 r_events）
     for (int i = 0; i < MAX_EVENTS + 1; i++) {
         event& ev = r_events[i];
         if (ev.status == 1 && ev.fd > 0) { // 若在红黑树上且fd有效
@@ -782,7 +776,7 @@ WorkerReactor::~WorkerReactor() {
         }
     }
 
-    // 4. 清理监听套接字（位于 r_events[MAX_EVENTS]）
+    // 3. 清理监听套接字（位于 r_events[MAX_EVENTS]）
     event& listen_ev = r_events[MAX_EVENTS];
     if (listen_ev.fd > 0) {
         eventdel(&listen_ev);
@@ -790,7 +784,7 @@ WorkerReactor::~WorkerReactor() {
         listen_ev.fd = -1;
     }
 
-    //释放队列
+    // 4. 释放队列
     while(!evq.empty()){
         free(evq.front());
         evq.pop();

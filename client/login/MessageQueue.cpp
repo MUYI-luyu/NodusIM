@@ -44,6 +44,7 @@ bool MessageQueue::has_data() const {
 }
 
 bool MessageQueue::clear() {
+    std::lock_guard<std::mutex> lock(mtx_);
     while (!queue_.empty()) {
         queue_.pop();
     }
@@ -53,7 +54,12 @@ bool MessageQueue::clear() {
 void recv_thread(Socket* sock) {
     std::string msg;
     while (recv_running) {
-        sock->recvMsg(msg);  //从服务器读取一条消息
+        if (sock->recvMsg(msg) != 0) {
+            continue;
+        }
+        if (msg.size() < 5) {
+            continue;
+        }
         if(msg[0] == 'e' && msg[1] == 'c' && msg[2] == 'h' && msg[3] == 'o' && msg[4] == ':')
             EchoMsgQueue.push(msg.c_str() + 5);    // 放入队列
         else if(msg[0] == 'r' && msg[1] == 'e' && msg[2] == 'p' && msg[3] == 't' && msg[4] == ':')
@@ -70,15 +76,13 @@ void recv_thread(Socket* sock) {
             system("clear");
             fflush(stdout);
             printf("\033[0;31m您的账号在别处登录!\033[0m\n");
-            sock->~Socket();
+            sock->mshutdown();
             exit(1);
         }
         else {
             printf("\033[0;31m服务器发来错误前缀的消息！！！\033[0m\n");
             printf("\033[0;31m读到消息msg:%s\033[0m\n", msg.c_str());
             continue;
-            std::cerr << "连接断开\n";
-            break;
         }
     }
 }

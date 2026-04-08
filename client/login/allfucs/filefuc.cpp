@@ -25,9 +25,12 @@ std::string filefucs::GetFileName(const char arr[]){
 }
 
 bool filefucs::conntect_filepth(){
-    return dataclient.connectToHost(server_ip.c_str(), 5513);
+    if (!dataclient.connectToHost(server_ip.c_str(), 5513)) {
+        return false;
+    }
     Socket* sock = dataclient.getSocket();
     sock->setNonBlocking();
+    return true;
 }
 
 
@@ -299,7 +302,7 @@ void filefucs::download_file_with_offset(std::string sd){
 
             if(first){
                 //构造目录路径: ./recvfile/file_<recver_uid>/
-                std::string dir_path = "./recvfile_" + fb.receiver_uid;
+                std::string dir_path = "./recvfile/file_" + fb.receiver_uid;
                 std::filesystem::create_directories(dir_path);  // 若已存在不会报错
 
                 //构造文件名: sender_uid:fid:filename
@@ -395,8 +398,8 @@ void filefucs::download_gfile_with_offset(std::string sd){
             std::string data = packet.substr(data_offset);
 
             if(first){
-                //构造目录路径: ./recvfile/file_<recver_uid>/
-                std::string dir_path = "./recvgfile_" + fb.receiver_uid;
+                //构造目录路径: ./recvfile/gfile_<recver_uid>/
+                std::string dir_path = "./recvfile/gfile_" + fb.receiver_uid;
                 std::filesystem::create_directories(dir_path);  // 若已存在不会报错
 
                 //构造文件名: sender_uid:fid:filename

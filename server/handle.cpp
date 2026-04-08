@@ -5,6 +5,9 @@ std::mutex map_mutex;
 
 //处理用户传来的请求
 int handler::handle(void){
+    if (str.size() < 4) {
+        return 0;
+    }
     if(str[0] == 'j' && str[1] == 'r' && str[2] == 'n' && str[3] == 'm') jrnm();
     else if(str[0] == 'r' && str[1] == 'g' && str[2] == 's' && str[3] == 't') torgst();
     else if(str[0] == 'j' && str[1] == 'r' && str[2] == 'u' && str[3] == 'd') jrud();

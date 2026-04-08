@@ -91,28 +91,33 @@ int main(int argc, char* argv[]){
       server_port_ = std::atoi(argv[2]);
   }
   
-  redisContext* redis = connectRedis();
-  redisReply* reply = (redisReply*)redisCommand(redis, "EXISTS newuid");
-  if (reply->integer == 0) {
+    redisContext* redis = connectRedis();
+    if (!redis) {
+      LOG_ERROR("Redis 连接失败，服务器无法启动");
+      return 1;
+    }
+
+    auto ensureCounter = [&](const char* key) {
+      redisReply* reply = (redisReply*)redisCommand(redis, "EXISTS %s", key);
+      if (!reply) return false;
+      bool exists = (reply->type == REDIS_REPLY_INTEGER && reply->integer != 0);
       freeReplyObject(reply);
-      reply = (redisReply*)redisCommand(redis, "SET newuid 1000");
-  }
-  freeReplyObject(reply);
-  reply = (redisReply*)redisCommand(redis, "EXISTS newgid");
-  if (reply->integer == 0) {
+      if (exists) return true;
+
+      reply = (redisReply*)redisCommand(redis, "SET %s 1000", key);
+      if (!reply) return false;
       freeReplyObject(reply);
-      reply = (redisReply*)redisCommand(redis, "SET newgid 1000");
-  }
-  reply = (redisReply*)redisCommand(redis, "EXISTS newfid");
-  if (reply->integer == 0) {
-      freeReplyObject(reply);
-      reply = (redisReply*)redisCommand(redis, "SET newfid 1000");
-  }
-  freeReplyObject(reply);
-  if (redis) {
+      return true;
+    };
+
+    if (!ensureCounter("newuid") || !ensureCounter("newgid") || !ensureCounter("newfid")) {
+      LOG_ERROR("Redis 计数器初始化失败");
       redisFree(redis);
-      redis = nullptr;
-  }
+      return 1;
+    }
+
+    redisFree(redis);
+    redis = nullptr;
 
   // 启动心跳检测线程
   std::thread heart_thread(heartbeatMonitorThread);
