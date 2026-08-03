@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package protocol;
+
+option go_package = "im/core/protocol/pb;pb";
+
+// 注册
+message RegisterReq {
+  string username = 1;
+  string password = 2;
+  string email = 3;
+  string email_code = 4; // 邮箱验证码
+}
+
+// 登录
+message LoginReq {
+  string uid = 1;
+  string password = 2;
+}
+
+// 登出
+message LogoutReq {
+  string token = 1;
+}
+
+// 用户信息
+message UserInfoReq {
+  string token = 1;
+}
+message UserInfoResp {
+  string uid = 1;
+  string username = 2;
+  string email = 3;
+  int32 code = 4;
+  string msg = 5;
+}
+
+// 更新用户名
+message UpdateUsernameReq {
+  string uid = 1;
+  string new_username = 2;
+}
+
+// 更新密码
+message UpdatePwdReq {
+  string uid = 1;
+  string old_pwd = 2;
+  string new_pwd = 3;
+}
+
+// 删除账户
+message DeleteAccountReq {
+  string uid = 1;
+}
+
+// Token检验
+message TokenCheckReq {
+  string token = 1;
+}
+
+// 发送邮箱验证码
+message SendEmailCodeReq {
+  string email = 1;
+  string purpose = 2; // "register" 或 "reset_password"
+}
+
+// 重置密码
+message ResetPasswordReq {
+  string email = 1;
+  string email_code = 2;
+  string new_password = 3;
+} 

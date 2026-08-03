@@ -44,7 +44,7 @@ void Register::rgst(void * p){
         //sock->sendMsg(name);
         std::string str;
         str = EchoMsgQueue.wait_and_pop();
-        if(strcmp(str.c_str(), "norepeat") != 0){
+        if(strcmp(str.c_str(), "echo:norepeat") != 0){
             printf("\033[0;31m用户名已存在，请重新输入。\n\033[0m>");
             continue;
         }
@@ -98,52 +98,14 @@ void Register::rgst(void * p){
     PasswordHasher hs;
     hs.hashPassword(pwd);
 
-    //输入电子邮箱
-    EmailSender emsend;
-    printf("\033[0;32m请输入您要绑定的电子邮箱\n\033[0m>");
-    do{
-        chu(email);
-        int ret = enter(email, 0);
-        if(ret == -1) return;
-        //判断邮箱是否已经注册
-        //询问服务器
-        sock->sendMsg("jrem:"+std::string(email));//judge_repeat_email
-        std::string str;
-        str = EchoMsgQueue.wait_and_pop();
-        if(strcmp(str.c_str(), "repeat") == 0){
-            printf("\033[0;31m该邮箱已被注册，请重新输入。\n\033[0m>");
-            continue;
-        }
-        //发送验证码
-        printf("\033[0;32m正在为您发送验证码...\033[0m");
-        fflush(stdout); // 手动刷新标准输出缓冲区
-        if(!emsend.send(email)){
-            printf("\033[0;31m该电子邮箱无效，请检查并重新输入。\n\033[0m>");
-            continue;
-        }
-        break;
-    } while(1);
-    
-    //输入验证码
-    char yan[100];
-    printf("\033[0;32m请输入验证码\n\033[0m>");
-    do{
-        chu(yan);
-        int ret = enter(yan, 0);
-        if(ret == -1) return;
-        if(strcmp(yan, emsend.code) != 0){
-            printf("\033[0;31m验证码错误，请检查并重新输入。\n\033[0m>");
-            continue;
-        }
-        break;
-    } while(1);
+    // 注册不再要求邮箱和验证码，保留空字段以兼容现有用户 JSON 格式。
 
     //注册成功，发给服务器，写入数据库
     user u;
     u.uid = "0";
     u.name = name;
     u.pwd = pwd;
-    u.email = email;
+    u.email = "";
     u.stat = "offline";
     u.friendlist = {};
     u.grouplist = {};
@@ -159,7 +121,6 @@ void Register::rgst(void * p){
         printf("\033[0;32m注册成功!\n\033[0m");
         printf("\033[0;32m以下为您的基本信息:\n\033[0m");
         printf("\033[0;32m用户名:\033[0m%s\n",name);
-        printf("\033[0;32m电子邮箱:\033[0m%s\n",email);
         printf("\033[0;32muid:\033[0m%s\n",rev.c_str());
     }
     printf("\033[0;32m请按任意键继续...\033[0m");

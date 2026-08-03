@@ -4,7 +4,7 @@
 #include "../client.h"
 #include "../../user.h"
 #include "../login/MessageQueue.h"
-#include "SendEmail.h"
+// #include "SendEmail.h"
 #include <unistd.h>
 #include <cstring>
 #include "readdata.h"
@@ -17,7 +17,7 @@ private:
 
     char name[256];
     char pwd[256];
-    char email[256];
+    // char email[256];
     
     std::string pmitchar = "~!@#$%^&*()-=[];',./_+";
 };

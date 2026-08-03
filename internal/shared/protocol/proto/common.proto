@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package protocol;
+
+option go_package = "im/core/protocol/pb;pb";
+
+message APIResp {
+  int32 code = 1;
+  string msg = 2;
+  bytes data = 3;
+}

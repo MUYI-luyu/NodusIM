@@ -1,0 +1,12 @@
+/参考项目/
+
+/简易cpp-chatroom/build/
+/简易cpp-chatroom/logs/
+/简易cpp-chatroom/test_login_debug
+/简易cpp-chatroom/register_demo_users
+
+/config.env
+/bin/
+/uploads/
+/scripts/logs/
+/scripts/pids/
