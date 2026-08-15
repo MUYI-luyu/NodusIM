@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package protocol;
+
+option go_package = "im/core/protocol/pb;pb";
+
+// 发送好友请求
+message AddFriendReq {
+  string from_uid = 1;
+  string to_uid = 2;
+  string verify_msg = 3;
+  string token = 4;
+}
+message AddFriendResp {
+  int32 code = 1;
+  string msg = 2;
+}
+
+// 获取好友列表
+message FriendListReq {
+  string uid = 1;
+  string token = 2;
+}
+message FriendListResp {
+  repeated string friend_uids = 1;
+  repeated string friend_usernames = 2;
+  int32 code = 3;
+  string msg = 4;
+  repeated string remarks = 5;
+}
+
+// 查看好友信息
+message FriendInfoReq {
+  string uid = 1;
+  string friend_uid = 2;
+  string token = 3;
+}
+message FriendInfoResp {
+  string uid = 1;
+  string username = 2;
+  string email = 3;
+  string remark = 4;
+  bool dnd = 5;
+  int32 code = 6;
+  string msg = 7;
+}
+
+// 设置好友备注
+message UpdateFriendRemarkReq {
+  string uid = 1;
+  string friend_uid = 2;
+  string remark = 3;
+  string token = 4;
+}
+message UpdateFriendRemarkResp {
+  int32 code = 1;
+  string msg = 2;
+}
+
+// 设置消息免打扰
+message SetFriendDNDReq {
+  string uid = 1;
+  string friend_uid = 2;
+  bool dnd = 3; // true=开启免打扰
+  string token = 4;
+}
+message SetFriendDNDResp {
+  int32 code = 1;
+  string msg = 2;
+}
+
+// 删除好友
+message DeleteFriendReq {
+  string uid = 1;
+  string friend_uid = 2;
+  string token = 3;
+}
+message DeleteFriendResp {
+  int32 code = 1;
+  string msg = 2;
+}
+
+// 获取收到的好友请求列表响应
+message FriendRequestListResp {
+  repeated string from_uids = 1;
+  repeated string from_usernames = 2;
+  repeated string verify_msgs = 3;
+  int32 code = 4;
+  string msg = 5;
+}
+
+// 处理好友请求
+message HandleFriendRequestReq {
+  string from_uid = 1;
+  string to_uid = 2;
+  bool accept = 3;
+  string token = 4;
+}
+message HandleFriendRequestResp {
+  int32 code = 1;
+  string msg = 2;
+}
