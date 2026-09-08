@@ -45,6 +45,7 @@ func NewFriendHandler(service *service.FriendService, logger *logger.Logger, dbM
 	}
 	rpcManager.UseEtcd(disc, "/im/services")
 	_ = rpcManager.WatchService("user-service")
+	_ = rpcManager.WatchService("notification-service")
 
 	return &FriendHandler{
 		service:        service,
@@ -134,6 +135,16 @@ func (h *FriendHandler) fetchUserInfo(ctx context.Context, uid string) (string, 
 	return info.Username, info.Email
 }
 
+// helper: 调用消息服务推送通知
+func (h *FriendHandler) notify(notif *pb.Notification) {
+	ctx := context.Background()
+
+	_, err := h.rpcManager.CallWithRetry(ctx, "message-service", "/notify", notif, 3)
+	if err != nil {
+		h.logger.Errorf("发送通知失败: %v", err)
+	}
+}
+
 // addFriend 添加好友
 func (h *FriendHandler) addFriend(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
@@ -163,6 +174,11 @@ func (h *FriendHandler) addFriend(w http.ResponseWriter, r *http.Request) {
 		h.writeResp(w, 1, err.Error(), nil)
 		return
 	}
+	// 推送好友请求通知（旧类型）
+	fromUsername := h.fetchUsernameByUID(req.FromUid)
+	n := &pb.Notification{Type: "friend_request", From: req.FromUid, FromUsername: fromUsername, To: req.ToUid, Content: req.VerifyMsg}
+	h.notify(n)
+
 	resp := &pb.AddFriendResp{Code: 0, Msg: "好友请求已发送"}
 	data, _ := proto.Marshal(resp)
 	h.writeResp(w, 0, "ok", data)

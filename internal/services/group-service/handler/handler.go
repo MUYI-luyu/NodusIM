@@ -46,6 +46,7 @@ func NewGroupHandler(service *service.GroupService, logger *logger.Logger, dbMan
 	}
 	rpcManager.UseEtcd(disc, "/im/services")
 	_ = rpcManager.WatchService("user-service")
+	_ = rpcManager.WatchService("notification-service")
 
 	return &GroupHandler{
 		service:        service,
@@ -84,6 +85,16 @@ func (h *GroupHandler) writeResp(w http.ResponseWriter, code int, msg string, da
 	resp := &pb.APIResp{Code: int32(code), Msg: msg, Data: data}
 	b, _ := proto.Marshal(resp)
 	w.Write(b)
+}
+
+// 内部: 推送通知到消息服务
+func (h *GroupHandler) notify(to string, n *pb.Notification) {
+	ctx := context.Background()
+
+	_, err := h.rpcManager.CallWithRetry(ctx, "message-service", "/notify", n, 3)
+	if err != nil {
+		h.logger.Errorf("发送通知失败: %v", err)
+	}
 }
 
 // createGroup 创建群组
@@ -129,7 +140,7 @@ func (h *GroupHandler) joinGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 检查群组是否存在
-	_, err = h.service.GetGroup(req.GroupId)
+	g, err := h.service.GetGroup(req.GroupId)
 	if err != nil {
 		h.writeResp(w, 1, "群组不存在", nil)
 		return
@@ -145,6 +156,20 @@ func (h *GroupHandler) joinGroup(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeResp(w, 1, "申请入群失败: "+err.Error(), nil)
 		return
+	}
+	// 通知所有管理员和群主有新的审批
+	adminsAndOwner, _ := h.service.GetGroupAdminsAndOwner(req.GroupId)
+	for _, adminUID := range adminsAndOwner {
+		n := &pb.Notification{
+			Type:      "group_application_pending",
+			From:      req.Uid,
+			To:        adminUID,
+			GroupId:   g.GroupID,
+			GroupName: g.Name,
+			Content:   "",
+			Extra:     "", // 只放特殊参数
+		}
+		h.notify(adminUID, n)
 	}
 	h.writeResp(w, 0, "入群申请已发送，请等待管理员审批", nil)
 }
@@ -295,6 +320,11 @@ func (h *GroupHandler) leaveGroup(w http.ResponseWriter, r *http.Request) {
 		h.writeResp(w, 1, err.Error(), nil)
 		return
 	}
+	// 通知离开（旧类型可选: group_member_left）
+	g, _ := h.service.GetGroup(req.GroupId)
+	n := &pb.Notification{Type: "group_member_left", From: req.Uid, GroupId: req.GroupId, GroupName: g.Name}
+	// 通知群主
+	h.notify(g.OwnerUID, n)
 	resp := &pb.LeaveGroupResp{Code: 0, Msg: "退出群组成功"}
 	data, _ := proto.Marshal(resp)
 	h.writeResp(w, 0, "ok", data)
@@ -363,6 +393,7 @@ func (h *GroupHandler) inviteToGroup(w http.ResponseWriter, r *http.Request) {
 		h.writeResp(w, 1, "无法获取邀请者身份", nil)
 		return
 	}
+	g, _ := h.service.GetGroup(req.GroupId)
 	for _, invitee := range req.InviteeUids {
 		if role == "owner" || role == "admin" {
 			// 管理员/群主直接添加成员
@@ -382,6 +413,9 @@ func (h *GroupHandler) inviteToGroup(w http.ResponseWriter, r *http.Request) {
 				h.writeResp(w, 1, "邀请请求失败: "+invitee+":"+err.Error(), nil)
 				return
 			}
+			// 通知群主/管理员待审批（旧类型: group_application_pending）
+			n := &pb.Notification{Type: "group_application_pending", From: req.InviterUid, To: g.OwnerUID, GroupId: req.GroupId, GroupName: g.Name, Content: invitee}
+			h.notify(g.OwnerUID, n)
 		}
 	}
 	h.writeResp(w, 0, "邀请操作已处理", nil)
@@ -562,6 +596,10 @@ func (h *GroupHandler) setGroupMute(w http.ResponseWriter, r *http.Request) {
 		h.writeResp(w, 1, err.Error(), nil)
 		return
 	}
+	// 通知被处理者（旧类型: group_mute_change）
+	g, _ := h.service.GetGroup(req.GroupId)
+	n := &pb.Notification{Type: "group_mute_change", From: req.OperatorUid, To: req.TargetUid, GroupId: req.GroupId, GroupName: g.Name, Content: fmt.Sprintf("mute=%v", req.Mute)}
+	h.notify(req.TargetUid, n)
 	resp := &pb.SetGroupMuteResp{Code: 0, Msg: "群禁言设置成功"}
 	data, _ := proto.Marshal(resp)
 	h.writeResp(w, 0, "ok", data)
@@ -619,6 +657,10 @@ func (h *GroupHandler) kickFromGroup(w http.ResponseWriter, r *http.Request) {
 		h.writeResp(w, 1, err.Error(), nil)
 		return
 	}
+	// 通知被踢者（旧类型: group_kicked）
+	g, _ := h.service.GetGroup(req.GroupId)
+	n := &pb.Notification{Type: "group_kicked", From: req.OperatorUid, To: req.TargetUid, GroupId: req.GroupId, GroupName: g.Name}
+	h.notify(req.TargetUid, n)
 	h.writeResp(w, 0, "已移除成员", nil)
 }
 
@@ -648,6 +690,12 @@ func (h *GroupHandler) updateGroupName(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeResp(w, 1, err.Error(), nil)
 		return
+	}
+	// 通知所有成员（旧类型: group_name_updated）
+	members, _ := h.service.GetGroupMembers(req.GroupId)
+	for _, m := range members {
+		n := &pb.Notification{Type: "group_name_updated", From: req.OperatorUid, To: m.UID, GroupId: req.GroupId, GroupName: req.NewName}
+		h.notify(m.UID, n)
 	}
 	resp := &pb.UpdateGroupNameResp{Code: 0, Msg: "群名修改成功"}
 	data, _ := proto.Marshal(resp)
@@ -693,6 +741,14 @@ func (h *GroupHandler) setGroupAdmin(w http.ResponseWriter, r *http.Request) {
 	if req.SetAdmin {
 		msg = "已设置为管理员"
 	}
+	// 通知被设置人（旧类型: group_admin_change）
+	g, _ := h.service.GetGroup(req.GroupId)
+	content := "已取消管理员权限"
+	if req.SetAdmin {
+		content = "已被设置为管理员"
+	}
+	n := &pb.Notification{Type: "group_admin_change", From: req.OperatorUid, To: req.TargetUid, GroupId: req.GroupId, GroupName: g.Name, Content: content}
+	h.notify(req.TargetUid, n)
 	resp := &pb.SetGroupAdminResp{Code: 0, Msg: msg}
 	data, _ := proto.Marshal(resp)
 	h.writeResp(w, 0, "ok", data)
@@ -724,6 +780,13 @@ func (h *GroupHandler) dismissGroup(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeResp(w, 1, "解散群组失败: "+err.Error(), nil)
 		return
+	}
+	// 通知所有成员（旧类型: group_dismissed）
+	members, _ := h.service.GetGroupMembers(req.GroupId)
+	g, _ := h.service.GetGroup(req.GroupId)
+	for _, m := range members {
+		n := &pb.Notification{Type: "group_dismissed", From: req.OperatorUid, To: m.UID, GroupId: req.GroupId, GroupName: g.Name}
+		h.notify(m.UID, n)
 	}
 	resp := &pb.DismissGroupResp{Code: 0, Msg: "群组已解散"}
 	data, _ := proto.Marshal(resp)
@@ -815,6 +878,10 @@ func (h *GroupHandler) handleGroupRequest(w http.ResponseWriter, r *http.Request
 			h.writeResp(w, 1, err.Error(), nil)
 			return
 		}
+		// 通知被邀请者（旧类型: group_application_approved）
+		g, _ := h.service.GetGroup(req.GroupId)
+		n := &pb.Notification{Type: "group_application_approved", From: "", To: req.InviteeUid, GroupId: req.GroupId, GroupName: g.Name}
+		h.notify(req.InviteeUid, n)
 		h.writeResp(w, 0, "已同意并添加成员", nil)
 		return
 	} else {
@@ -823,6 +890,10 @@ func (h *GroupHandler) handleGroupRequest(w http.ResponseWriter, r *http.Request
 			h.writeResp(w, 1, err.Error(), nil)
 			return
 		}
+		// 通知被邀请者（旧类型: group_application_rejected）
+		g, _ := h.service.GetGroup(req.GroupId)
+		n := &pb.Notification{Type: "group_application_rejected", From: "", To: req.InviteeUid, GroupId: req.GroupId, GroupName: g.Name}
+		h.notify(req.InviteeUid, n)
 		h.writeResp(w, 0, "已拒绝邀请", nil)
 		return
 	}
