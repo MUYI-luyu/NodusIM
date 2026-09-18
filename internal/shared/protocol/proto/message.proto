@@ -33,6 +33,15 @@ message Notification {
   string extra = 9;     // 扩展字段（结构化key:value,逗号分隔，便于未来扩展）
 }
 
+// 文件信息
+message FileInfo {
+  string filename = 1;      // 服务器文件名
+  string original_name = 2; // 原始文件名
+  int64  size = 3;          // 文件大小
+  string type = 4;          // 文件类型
+  string url = 5;           // 文件URL
+}
+
 message IMMessageList {
   repeated IMMessage messages = 1;
 }
