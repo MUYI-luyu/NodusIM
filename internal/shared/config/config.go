@@ -15,6 +15,7 @@ type ServiceConfig struct {
 	Mongo    MongoConfig    `json:"mongo"`
 	Log      LogConfig      `json:"log"`
 	Email    EmailConfig    `json:"email"`
+	File     FileConfig     `json:"file"`
 }
 
 // ServerConfig 服务器配置
@@ -57,6 +58,11 @@ type EmailConfig struct {
 	Username  string `json:"username"`
 	Password  string `json:"password"`
 	FromEmail string `json:"from_email"`
+}
+
+// FileConfig 文件配置
+type FileConfig struct {
+	UploadPath string `json:"upload_path"`
 }
 
 // LoadServiceConfig 加载服务配置
@@ -116,12 +122,17 @@ func LoadServiceConfig(serviceName string) *ServiceConfig {
 			Password:  firstNonEmpty(getEnv("SMTP_PASSWORD", ""), getEnv("EMAIL_PASSWORD", "")),
 			FromEmail: firstNonEmpty(getEnv("FROM_EMAIL", ""), getEnv("EMAIL_FROM", "")),
 		},
+		File: FileConfig{
+			UploadPath: firstNonEmpty(getEnv("UPLOAD_PATH", ""), getEnv("UPLOAD_DIR", "./uploads")),
+		},
 	}
 }
 
 // getPortForService 根据服务名获取端口
 // 端口分配规划：
 // 8080-8086: 单实例服务端口
+// 8087: Traefik网关
+// 8088: 前端界面
 // 8090-8099: 用户服务多实例 (8090, 8091, 8092...)
 // 8100-8109: 好友服务多实例 (8100, 8101, 8102...)
 // 8110-8119: 群组服务多实例 (8110, 8111, 8112...)
@@ -136,6 +147,7 @@ func getPortForService(serviceName string) int {
 		"message-service":      8120, // 改为8120，支持多实例
 		"file-service":         8130, // 改为8130，支持多实例
 		"notification-service": 8140, // 改为8140，支持多实例
+		"gateway":              8080,
 	}
 	if port, exists := ports[serviceName]; exists {
 		return port

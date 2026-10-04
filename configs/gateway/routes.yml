@@ -1,0 +1,150 @@
+# Traefik 路由配置
+http:
+  routers:
+    # 用户服务路由
+    user-service:
+      rule: "PathPrefix(`/api/user`)"
+      service: "user-service"
+      middlewares:
+        - "cors"
+        - "strip-prefix"
+    
+    # 好友服务路由
+    friend-service:
+      rule: "PathPrefix(`/api/friend`)"
+      service: "friend-service"
+      middlewares:
+        - "cors"
+        - "strip-prefix"
+    
+    # 群组服务路由
+    group-service:
+      rule: "PathPrefix(`/api/group`)"
+      service: "group-service"
+      middlewares:
+        - "cors"
+        - "strip-prefix"
+    
+    # 消息服务路由
+    message-service:
+      rule: "PathPrefix(`/api/message`)"
+      service: "message-service"
+      middlewares:
+        - "cors"
+        - "strip-prefix"
+    
+    # 文件服务路由
+    file-service:
+      rule: "PathPrefix(`/api/file`)"
+      service: "file-service"
+      middlewares:
+        - "cors"
+        - "strip-prefix"
+    
+    # 通知服务路由
+    notification-service:
+      rule: "PathPrefix(`/api/notification`)"
+      service: "notification-service"
+      middlewares:
+        - "cors"
+        - "strip-prefix"
+    
+    # 文件上传路由（特殊处理）
+    file-upload:
+      rule: "PathPrefix(`/upload`)"
+      service: "file-service"
+      middlewares:
+        - "cors"
+    
+    # 文件下载路由
+    file-download:
+      rule: "PathPrefix(`/uploads/`)"
+      service: "file-service"
+      middlewares:
+        - "cors"
+    
+    # WebSocket路由（消息服务）
+    websocket:
+      rule: "PathPrefix(`/ws`)"
+      service: "message-service"
+      middlewares:
+        - "cors"
+
+  services:
+    # 用户服务 - 轮询负载均衡策略
+    user-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8090"  # 实例1
+          - url: "http://127.0.0.1:8091"  # 实例2
+          - url: "http://127.0.0.1:8092"  # 实例3
+    
+    # 好友服务 - 轮询负载均衡策略
+    friend-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8100"  # 实例1
+          - url: "http://127.0.0.1:8101"  # 实例2
+          - url: "http://127.0.0.1:8102"  # 实例3
+    
+    # 群组服务 - 轮询负载均衡策略
+    group-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8110"  # 实例1
+          - url: "http://127.0.0.1:8111"  # 实例2
+          - url: "http://127.0.0.1:8112"  # 实例3
+    
+    # 消息服务 - 轮询负载均衡策略
+    message-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8120"  # 实例1
+          - url: "http://127.0.0.1:8121"  # 实例2
+          - url: "http://127.0.0.1:8122"  # 实例3
+    
+    # 文件服务 - 轮询负载均衡策略
+    file-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8130"  # 实例1
+          - url: "http://127.0.0.1:8131"  # 实例2
+          - url: "http://127.0.0.1:8132"  # 实例3
+    
+    # 通知服务 - 轮询负载均衡策略
+    notification-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8140"  # 实例1
+          - url: "http://127.0.0.1:8141"  # 实例2
+          - url: "http://127.0.0.1:8142"  # 实例3
+
+  middlewares:
+    # CORS中间件
+    cors:
+      headers:
+        accessControlAllowMethods:
+          - "GET"
+          - "POST"
+          - "PUT"
+          - "DELETE"
+          - "OPTIONS"
+        accessControlAllowOriginList:
+          - "*"
+        accessControlAllowHeaders:
+          - "Content-Type"
+          - "Authorization"
+        accessControlMaxAge: 100
+        addVaryHeader: true
+    
+    # 路径前缀移除中间件
+    strip-prefix:
+      stripPrefix:
+        prefixes:
+          - "/api/user"
+          - "/api/friend"
+          - "/api/group"
+          - "/api/message"
+          - "/api/file"
+          - "/api/notification"
+    

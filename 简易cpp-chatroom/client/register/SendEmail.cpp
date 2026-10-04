@@ -1,5 +1,16 @@
 #include "./SendEmail.h"
 
+EmailSender::EmailSender() {
+    const char* smtp_server_env = std::getenv("CHATROOM_SMTP_SERVER");
+    const char* sender_email_env = std::getenv("CHATROOM_SMTP_EMAIL");
+    const char* sender_pass_env = std::getenv("CHATROOM_SMTP_PASSWORD");
+
+    smtp_server = smtp_server_env ? smtp_server_env : "smtps://smtp.qq.com:465";
+    sender_email = sender_email_env ? sender_email_env : "";
+    sender_user = sender_email;
+    sender_pass = sender_pass_env ? sender_pass_env : "";
+}
+
 size_t EmailSender::payload_source(void* ptr, size_t size, size_t nmemb, void* userp) {
     std::string* payload = (std::string*)userp;
     size_t buffer_size = size * nmemb;
@@ -22,6 +33,11 @@ void EmailSender::getcode() {
 }
 
 bool EmailSender::send(const std::string& receiver_email) {
+    if (sender_email.empty() || sender_pass.empty()) {
+        std::cerr << "邮件服务未配置，请设置 CHATROOM_SMTP_EMAIL 和 CHATROOM_SMTP_PASSWORD\n";
+        return false;
+    }
+
     getcode();
     std::string to = "<" + receiver_email + ">";
 

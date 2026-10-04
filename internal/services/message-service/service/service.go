@@ -1,12 +1,14 @@
 package service
 
 import (
-	"time"
+	"errors"
 
 	"im/internal/services/message-service/model"
 	"im/internal/services/message-service/storage"
 	"im/internal/services/message-service/utils"
 	"im/internal/shared/logger"
+
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // MessageService 消息服务
@@ -23,78 +25,57 @@ func NewMessageService(storage storage.MessageStorage, logger *logger.Logger) *M
 	}
 }
 
-// SendPrivateMessage 发送私聊消息
-func (s *MessageService) SendPrivateMessage(from, to, messageType, content, extra string) (*model.IMMessage, error) {
-	s.logger.Infof("发送私聊消息: %s -> %s, 类型: %s", from, to, messageType)
-
-	// 创建消息
-	msg := &model.IMMessage{
-		ID:        utils.GenerateMessageID(),
-		From:      from,
-		To:        to,
-		Type:      messageType,
-		Content:   content,
-		Extra:     extra,
-		Timestamp: time.Now().Unix(),
-		CreatedAt: time.Now(),
-	}
-
-	// 生成会话键
-	sessionKey := utils.GenerateSessionKey(from, to)
-
-	// 存储到Redis
-	if err := s.storage.StoreMessage(sessionKey, msg); err != nil {
-		s.logger.Errorf("存储消息到Redis失败: %v", err)
-		return nil, err
-	}
-
-	// 存储到MongoDB
+// PersistPrivateMessage 持久化私聊消息。MongoDB 是可靠消息历史的事实来源，
+// Redis 仅保存近期查询缓存，因此缓存失败不会影响消费确认。
+func (s *MessageService) PersistPrivateMessage(msg *model.IMMessage) (bool, error) {
 	privateMsg := &model.PrivateMessage{
-		IMMessage: *msg,
+		IMMessage:  *msg,
+		SessionKey: utils.GenerateSessionKey(msg.From, msg.To),
 	}
 	if err := s.storage.StorePrivateMessage(privateMsg); err != nil {
-		s.logger.Errorf("存储私聊消息到MongoDB失败: %v", err)
-		return nil, err
+		if isDuplicateKeyError(err) {
+			return false, nil
+		}
+		return false, err
 	}
 
-	return msg, nil
+	if err := s.storage.StoreMessage(privateMsg.SessionKey, msg); err != nil {
+		s.logger.Errorf("写入私聊近期缓存失败，消息已持久化: %v", err)
+	}
+	return true, nil
 }
 
-// SendGroupMessage 发送群聊消息
-func (s *MessageService) SendGroupMessage(from, groupID, messageType, content, extra string) (*model.IMMessage, error) {
-	s.logger.Infof("发送群聊消息: %s -> %s, 类型: %s", from, groupID, messageType)
-
-	// 创建消息
-	msg := &model.IMMessage{
-		ID:        utils.GenerateMessageID(),
-		From:      from,
-		To:        groupID, // 群聊消息使用To字段存储群组ID
-		Type:      messageType,
-		Content:   content,
-		Extra:     extra,
-		Timestamp: time.Now().Unix(),
-		CreatedAt: time.Now(),
-	}
-
-	// 生成会话键
-	sessionKey := utils.GenerateGroupSessionKey(groupID)
-
-	// 存储到Redis
-	if err := s.storage.StoreMessage(sessionKey, msg); err != nil {
-		s.logger.Errorf("存储消息到Redis失败: %v", err)
-		return nil, err
-	}
-
-	// 存储到MongoDB
+// PersistGroupMessage 持久化群聊消息。To 仍承载群组 ID，与既有消息模型保持一致。
+func (s *MessageService) PersistGroupMessage(msg *model.IMMessage) (bool, error) {
+	groupID := msg.To
 	groupMsg := &model.GroupMessage{
 		IMMessage: *msg,
+		GroupID:   groupID,
 	}
 	if err := s.storage.StoreGroupMessage(groupMsg); err != nil {
-		s.logger.Errorf("存储群聊消息到MongoDB失败: %v", err)
-		return nil, err
+		if isDuplicateKeyError(err) {
+			return false, nil
+		}
+		return false, err
 	}
 
-	return msg, nil
+	if err := s.storage.StoreMessage(utils.GenerateGroupSessionKey(groupID), msg); err != nil {
+		s.logger.Errorf("写入群聊近期缓存失败，消息已持久化: %v", err)
+	}
+	return true, nil
+}
+
+func isDuplicateKeyError(err error) bool {
+	var writeException mongo.WriteException
+	if !errors.As(err, &writeException) {
+		return false
+	}
+	for _, writeErr := range writeException.WriteErrors {
+		if writeErr.Code == 11000 {
+			return true
+		}
+	}
+	return false
 }
 
 // GetRecentPrivateMessages 获取最近私聊消息

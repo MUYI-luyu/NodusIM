@@ -1,0 +1,22 @@
+# Traefik 配置文件
+api:
+  dashboard: true
+  insecure: true  # 在生产环境中应该使用安全配置
+
+entryPoints:
+  web:
+    address: ":8087"
+  websecure:
+    address: ":8443"
+
+# 日志配置
+log:
+  level: INFO
+
+accessLog: {}
+
+# 启用文件配置
+providers:
+  file:
+    filename: ./configs/gateway/routes.yml
+    watch: true

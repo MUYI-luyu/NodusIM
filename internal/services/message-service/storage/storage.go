@@ -133,7 +133,7 @@ func (s *HybridMessageStorage) StorePrivateMessage(message *model.PrivateMessage
 	collection := s.dbManager.GetMongoDB().Database("im_messages").Collection("private_messages")
 	_, err := collection.InsertOne(ctx, message)
 	if err != nil {
-		return fmt.Errorf("存储私聊消息到MongoDB失败: %v", err)
+		return fmt.Errorf("存储私聊消息到MongoDB失败: %w", err)
 	}
 
 	return nil
@@ -146,7 +146,7 @@ func (s *HybridMessageStorage) StoreGroupMessage(message *model.GroupMessage) er
 	collection := s.dbManager.GetMongoDB().Database("im_messages").Collection("group_messages")
 	_, err := collection.InsertOne(ctx, message)
 	if err != nil {
-		return fmt.Errorf("存储群聊消息到MongoDB失败: %v", err)
+		return fmt.Errorf("存储群聊消息到MongoDB失败: %w", err)
 	}
 
 	return nil

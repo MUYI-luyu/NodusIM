@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -11,7 +12,9 @@ import (
 	"time"
 
 	"im/internal/services/message-service/model"
+	msgqueue "im/internal/services/message-service/queue"
 	"im/internal/services/message-service/service"
+	"im/internal/services/message-service/utils"
 	ws "im/internal/services/message-service/websocket"
 	"im/internal/shared/auth"
 	"im/internal/shared/database"
@@ -19,6 +22,7 @@ import (
 	"im/internal/shared/logger"
 	"im/internal/shared/middleware"
 	pb "im/internal/shared/protocol/pb"
+	sharedqueue "im/internal/shared/queue"
 	"im/internal/shared/rpc"
 
 	"github.com/gorilla/websocket"
@@ -35,6 +39,7 @@ type MessageHandler struct {
 	requestHandler  *middleware.RequestHandler
 	chatConnManager *ws.ChatConnectionManager
 	rpcManager      *rpc.Manager
+	queueManager    *sharedqueue.Manager
 }
 
 // WebSocket升级器
@@ -79,6 +84,7 @@ func NewMessageHandler(chatService *service.MessageService, logger *logger.Logge
 	_ = rpcManager.WatchService("group-service")
 	_ = rpcManager.WatchService("friend-service")
 	_ = rpcManager.WatchService("user-service")
+	queueManager := sharedqueue.NewManager(dbManager, logger)
 
 	handler := &MessageHandler{
 		chatService:     chatService,
@@ -86,7 +92,10 @@ func NewMessageHandler(chatService *service.MessageService, logger *logger.Logge
 		requestHandler:  middleware.NewRequestHandler(logger, dbManager.GetRedis()),
 		chatConnManager: chatConnManager,
 		rpcManager:      rpcManager,
+		queueManager:    queueManager,
 	}
+
+	go handler.startQueueConsumer()
 
 	return handler
 }
@@ -418,59 +427,12 @@ func (h *MessageHandler) ws(w http.ResponseWriter, r *http.Request) {
 			members := h.getGroupMembers(msg.GroupId)
 			h.logger.Debugf("[GROUP] members: group=%s count=%d fp=%s", msg.GroupId, len(members), finger)
 
-			// 秘密模式消息不进行持久化存储
-			if msg.Type != "secret_chat" {
-				stored, err := h.chatService.SendGroupMessage(uid, msg.GroupId, msg.Type, msg.Content, msg.Extra)
-				if err != nil {
-					h.logger.Errorf("群聊消息持久化失败: %v", err)
-					errMsg := &pb.IMMessage{Type: "error", Content: "消息保存失败，请重试"}
-					b, _ := proto.Marshal(errMsg)
-					_ = conn.WriteMessage(websocket.BinaryMessage, b)
-					continue
-				}
-				msg.Timestamp = stored.Timestamp
-			}
-			// groupName 不再用于通知，先省略调用避免未使用
-
-			// 群组实时推送：逐个用户调用 BroadcastToUser（支持跨实例），并去重
-			b, _ := proto.Marshal(&msg)
-			seen := make(map[string]struct{}, len(members))
-			pushed := 0
-			for _, memberUID := range members {
-				if memberUID == uid {
-					h.logger.Debugf("[GROUP] skip-sender: to=%s fp=%s", memberUID, finger)
-					continue
-				}
-				if _, ok := seen[memberUID]; ok {
-					h.logger.Debugf("[GROUP] duplicate-recipient: to=%s fp=%s", memberUID, finger)
-					continue
-				}
-				seen[memberUID] = struct{}{}
-				if err := h.chatConnManager.BroadcastToUser(memberUID, b); err != nil {
-					h.logger.Warnf("[GROUP] push-failed: to=%s fp=%s err=%v", memberUID, finger, err)
-				} else {
-					pushed++
-					h.logger.Debugf("[GROUP] push-ok: to=%s fp=%s", memberUID, finger)
-				}
-			}
-			h.logger.Infof("[GROUP] pushed: group=%s fp=%s recipients=%d pushed=%d", msg.GroupId, finger, len(seen), pushed)
-
-			// 恢复：发送群聊通知用于弹窗提示（前端不再基于通知累加未读）
-			for _, memberUID := range members {
-				if memberUID == uid {
-					continue
-				}
-				if msg.Type == "secret_chat" {
-					h.logger.Debugf("[GROUP][notif] skip-secret: to=%s fp=%s", memberUID, finger)
-					continue
-				}
-				if h.isGroupDND(msg.GroupId, memberUID) {
-					h.logger.Infof("[GROUP][notif] skip-dnd: to=%s fp=%s", memberUID, finger)
-					continue
-				}
-				n := &pb.Notification{Type: "group_chat_message", From: uid, To: memberUID, GroupId: msg.GroupId, Content: msg.Content, Timestamp: msg.Timestamp}
-				h.logger.Infof("[GROUP][notif] send: to=%s fp=%s", memberUID, finger)
-				h.sendNotification(memberUID, n)
+			if err := h.publishGroupMessage(uid, msg.GroupId, msg.Type, msg.Content, msg.Extra, msg.Timestamp, members); err != nil {
+				h.logger.Errorf("群聊消息写入 Stream 失败: %v", err)
+				errMsg := &pb.IMMessage{Type: "error", Content: "消息接收失败，请重试"}
+				b, _ := proto.Marshal(errMsg)
+				_ = conn.WriteMessage(websocket.BinaryMessage, b)
+				continue
 			}
 			continue
 		}
@@ -479,43 +441,12 @@ func (h *MessageHandler) ws(w http.ResponseWriter, r *http.Request) {
 			msg.From = uid
 			msg.Timestamp = time.Now().Unix() // 设置正确的时间戳
 
-			var storedMsg *model.IMMessage
-			// 秘密模式消息不进行持久化存储
-			if msg.Type != "secret_chat" {
-				storedMsg, err = h.chatService.SendPrivateMessage(uid, msg.To, msg.Type, msg.Content, msg.Extra)
-				if err != nil {
-					h.logger.Errorf("私聊消息持久化失败: %v", err)
-					errMsg := &pb.IMMessage{Type: "error", Content: "消息保存失败，请重试"}
-					b, _ := proto.Marshal(errMsg)
-					_ = conn.WriteMessage(websocket.BinaryMessage, b)
-					continue
-				}
-				msg.Timestamp = storedMsg.Timestamp
-			}
-
-			if storedMsg != nil && !h.chatConnManager.IsUserOnline(msg.To) {
-				if err := h.chatService.StoreOfflineMessage(msg.To, storedMsg); err != nil {
-					h.logger.Errorf("存储离线消息失败: %v", err)
-				}
-			} else {
-				// 在线用户由连接管理器选择本地 WebSocket 或 Redis Pub/Sub 转发。
-				b, _ := proto.Marshal(&msg)
-				if err := h.chatConnManager.BroadcastToUser(msg.To, b); err != nil {
-					h.logger.Errorf("实时推送私聊消息失败: %v", err)
-					if storedMsg != nil {
-						if storeErr := h.chatService.StoreOfflineMessage(msg.To, storedMsg); storeErr != nil {
-							h.logger.Errorf("实时推送失败后存储离线消息失败: %v", storeErr)
-						}
-					}
-				}
-			}
-
-			// 注意：不发送回显给发送者，让前端自己处理回显
-			// 恢复：发送私聊通知用于弹窗提示（前端不再基于通知累加未读）
-			if msg.Type != "secret_chat" && !h.isFriendDND(uid, msg.To) {
-				n := &pb.Notification{Type: "private_chat_message", From: uid, To: msg.To, Content: msg.Content, Timestamp: msg.Timestamp}
-				h.logger.Infof("[PRIVATE][notif] send: to=%s from=%s", msg.To, uid)
-				h.sendNotification(msg.To, n)
+			if err := h.publishPrivateMessage(uid, msg.To, msg.Type, msg.Content, msg.Extra, msg.Timestamp); err != nil {
+				h.logger.Errorf("私聊消息写入 Stream 失败: %v", err)
+				errMsg := &pb.IMMessage{Type: "error", Content: "消息接收失败，请重试"}
+				b, _ := proto.Marshal(errMsg)
+				_ = conn.WriteMessage(websocket.BinaryMessage, b)
+				continue
 			}
 			continue
 		}
@@ -625,4 +556,146 @@ func (h *MessageHandler) Start(port int) error {
 	h.logger.Infof("服务启动在端口 %d", port)
 
 	return http.ListenAndServe(addr, mux)
+}
+
+func (h *MessageHandler) startQueueConsumer() {
+	port := os.Getenv("PORT")
+	consumerName := fmt.Sprintf("message-processor-%s-%d", port, os.Getpid())
+	processor := msgqueue.NewMessageProcessor(h.chatService, h.deliverPrivateMessage, h.deliverGroupMessage, h.logger)
+	processorManager := sharedqueue.NewProcessorManager(h.queueManager, h.logger)
+	processorManager.RegisterProcessor(&privateMessageProcessor{MessageProcessor: processor})
+	processorManager.RegisterProcessor(&groupMessageProcessor{MessageProcessor: processor})
+
+	if err := processorManager.StartConsumer(
+		context.Background(),
+		sharedqueue.StreamMessageProcessing,
+		sharedqueue.ConsumerGroupMessageProcessor,
+		consumerName,
+	); err != nil {
+		h.logger.Errorf("消息 Stream 消费者退出: %v", err)
+	}
+}
+
+type privateMessageProcessor struct {
+	*msgqueue.MessageProcessor
+}
+
+func (p *privateMessageProcessor) GetMessageType() string {
+	return sharedqueue.MessageTypePrivateMessage
+}
+
+type groupMessageProcessor struct {
+	*msgqueue.MessageProcessor
+}
+
+func (p *groupMessageProcessor) GetMessageType() string {
+	return sharedqueue.MessageTypeGroupMessage
+}
+
+func (h *MessageHandler) publishPrivateMessage(from, to, messageType, content, extra string, timestamp int64) error {
+	payload := msgqueue.MessagePayload{
+		ID:        utils.GenerateMessageID(),
+		From:      from,
+		To:        to,
+		Type:      messageType,
+		Content:   content,
+		Extra:     extra,
+		Timestamp: timestamp,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = h.queueManager.PublishMessage(context.Background(), sharedqueue.StreamMessageProcessing, &sharedqueue.QueueMessage{
+		ID:        payload.ID,
+		Type:      sharedqueue.MessageTypePrivateMessage,
+		Data:      data,
+		Timestamp: timestamp,
+	})
+	return err
+}
+
+func (h *MessageHandler) publishGroupMessage(from, groupID, messageType, content, extra string, timestamp int64, members []string) error {
+	payload := msgqueue.MessagePayload{
+		ID:        utils.GenerateMessageID(),
+		From:      from,
+		GroupID:   groupID,
+		Type:      messageType,
+		Content:   content,
+		Extra:     extra,
+		Timestamp: timestamp,
+		Members:   members,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = h.queueManager.PublishMessage(context.Background(), sharedqueue.StreamMessageProcessing, &sharedqueue.QueueMessage{
+		ID:        payload.ID,
+		Type:      sharedqueue.MessageTypeGroupMessage,
+		Data:      data,
+		Timestamp: timestamp,
+	})
+	return err
+}
+
+// deliverPrivateMessage runs only after the Stream event has been durably stored in MongoDB.
+func (h *MessageHandler) deliverPrivateMessage(msg *model.IMMessage) {
+	if !h.chatConnManager.IsUserOnline(msg.To) {
+		if err := h.chatService.StoreOfflineMessage(msg.To, msg); err != nil {
+			h.logger.Errorf("存储离线私聊消息失败: %v", err)
+		}
+	} else {
+		pbMsg := &pb.IMMessage{Type: msg.Type, From: msg.From, To: msg.To, Content: msg.Content, Extra: msg.Extra, Timestamp: msg.Timestamp}
+		data, _ := proto.Marshal(pbMsg)
+		if err := h.chatConnManager.BroadcastToUser(msg.To, data); err != nil {
+			h.logger.Errorf("实时推送私聊消息失败: %v", err)
+			if storeErr := h.chatService.StoreOfflineMessage(msg.To, msg); storeErr != nil {
+				h.logger.Errorf("存储离线私聊消息失败: %v", storeErr)
+			}
+		}
+	}
+
+	if !h.isFriendDND(msg.From, msg.To) {
+		h.sendNotification(msg.To, &pb.Notification{
+			Type:      "private_chat_message",
+			From:      msg.From,
+			To:        msg.To,
+			Content:   msg.Content,
+			Timestamp: msg.Timestamp,
+		})
+	}
+}
+
+// deliverGroupMessage runs after MongoDB persistence and fans out to the member snapshot in the event.
+func (h *MessageHandler) deliverGroupMessage(msg *model.IMMessage, members []string) {
+	pbMsg := &pb.IMMessage{Type: msg.Type, From: msg.From, GroupId: msg.To, Content: msg.Content, Extra: msg.Extra, Timestamp: msg.Timestamp}
+	data, _ := proto.Marshal(pbMsg)
+	seen := make(map[string]struct{}, len(members))
+	for _, memberUID := range members {
+		if memberUID == msg.From {
+			continue
+		}
+		if _, exists := seen[memberUID]; exists {
+			continue
+		}
+		seen[memberUID] = struct{}{}
+		if err := h.chatConnManager.BroadcastToUser(memberUID, data); err != nil {
+			h.logger.Warnf("群聊实时推送失败: group=%s to=%s err=%v", msg.To, memberUID, err)
+		}
+	}
+
+	for memberUID := range seen {
+		if h.isGroupDND(msg.To, memberUID) {
+			continue
+		}
+		h.sendNotification(memberUID, &pb.Notification{
+			Type:      "group_chat_message",
+			From:      msg.From,
+			To:        memberUID,
+			GroupId:   msg.To,
+			Content:   msg.Content,
+			Timestamp: msg.Timestamp,
+		})
+	}
 }

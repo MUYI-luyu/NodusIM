@@ -16,12 +16,12 @@ type IMMessage struct {
 
 // PrivateMessage 私聊消息
 type PrivateMessage struct {
-	IMMessage
+	IMMessage  `bson:",inline"`
 	SessionKey string `json:"session_key" bson:"session_key"`
 }
 
 // GroupMessage 群聊消息
 type GroupMessage struct {
-	IMMessage
-	GroupID string `json:"group_id" bson:"group_id"`
+	IMMessage `bson:",inline"`
+	GroupID   string `json:"group_id" bson:"group_id"`
 }
